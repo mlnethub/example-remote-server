@@ -10,6 +10,7 @@ The [Model Context Protocol](https://modelcontextprotocol.io) enables seamless i
 ## Table of Contents
 
 - [Quick Start](#quick-start)
+- [ASP.NET Core Port](#aspnet-core-port)
 - [MCP Features](#mcp-features)
 - [Development Setup](#development-setup)
 - [Project Structure](#project-structure)
@@ -42,6 +43,22 @@ The server is now running a lightweight config with everything bundled in a sing
 - sessions are stored in memory, rather than in Redis
 
 Other configurations are available: see [Development Setup](#development-setup), below.
+
+## ASP.NET Core Port
+
+An ASP.NET Core minimal API port of the MCP reference server is available in [`aspnet-core/`](aspnet-core/). It mirrors the OAuth metadata endpoints plus `/register`, `/authorize`, `/token`, `/introspect`, `/revoke`, and MCP routes (`/mcp`, `/sse`, `/message`) using in-memory storage.
+
+```bash
+cd aspnet-core
+dotnet build
+dotnet run
+```
+
+Configure via environment variables to match the Node.js server:
+- `PORT`/`Server:Port` (default `3232`)
+- `BASE_URI`/`Server:BaseUri` (default `http://localhost:3232`)
+- `AUTH_MODE`/`Server:AuthMode` (`internal`, `external`, `auth_server`)
+- `AUTH_SERVER_URL`/`Server:ExternalAuthServerUrl` (for external auth mode)
 
 ## MCP Features
 
