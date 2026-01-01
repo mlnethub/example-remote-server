@@ -308,14 +308,12 @@ static bool TryAuthenticate(HttpContext context, InMemoryAuthStore store, out Ac
 
     if (!context.Request.Headers.TryGetValue("Authorization", out var authHeader))
     {
-        failure = Results.Unauthorized();
         return false;
     }
 
     var header = authHeader.ToString();
     if (!header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
     {
-        failure = Results.Unauthorized();
         return false;
     }
 
@@ -323,7 +321,6 @@ static bool TryAuthenticate(HttpContext context, InMemoryAuthStore store, out Ac
 
     if (!store.TryGetActiveToken(tokenValue, out var token))
     {
-        failure = Results.Unauthorized();
         return false;
     }
 
