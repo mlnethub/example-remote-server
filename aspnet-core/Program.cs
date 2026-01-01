@@ -2,7 +2,6 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Text;
 using Microsoft.AspNetCore.WebUtilities;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -659,7 +658,6 @@ static object CallElicitInputs()
         }
     };
 }
-
 
 static object CallMcpAppsHelloWorld()
 {
