@@ -295,9 +295,12 @@ ValueTask<ReadResourceResult> ReadResourceAsync(RequestContext<ReadResourceReque
 
     if (resource == null && uri.StartsWith("test://static/resource/", StringComparison.OrdinalIgnoreCase))
     {
+        var lastSlash = uri.LastIndexOf('/');
+        var name = lastSlash >= 0 && lastSlash < uri.Length - 1 ? uri[(lastSlash + 1)..] : uri;
+
         resource = new Resource
         {
-            Name = uri[(uri.LastIndexOf('/') + 1)..],
+            Name = name,
             Title = $"Generated {uri}",
             Uri = uri,
             Description = "Templated resource generated on demand",
@@ -310,9 +313,17 @@ ValueTask<ReadResourceResult> ReadResourceAsync(RequestContext<ReadResourceReque
         return ValueTask.FromResult(new ReadResourceResult { Contents = Array.Empty<ResourceContents>() });
     }
 
-    ResourceContents content = resource.MimeType?.StartsWith("text/", StringComparison.OrdinalIgnoreCase) == true
-        ? new TextResourceContents { Uri = resource.Uri, MimeType = resource.MimeType, Text = $"Content for {resource.Title}" }
-        : new BlobResourceContents { Uri = resource.Uri, MimeType = resource.MimeType ?? "application/octet-stream", Blob = Convert.ToBase64String(Encoding.UTF8.GetBytes($"Binary payload for {resource.Title}")) };
+    ResourceContents content;
+    if (resource.MimeType?.StartsWith("text/", StringComparison.OrdinalIgnoreCase) == true)
+    {
+        content = new TextResourceContents { Uri = resource.Uri, MimeType = resource.MimeType, Text = $"Content for {resource.Title}" };
+    }
+    else
+    {
+        var payload = $"Binary payload for {resource.Title}";
+        var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(payload));
+        content = new BlobResourceContents { Uri = resource.Uri, MimeType = resource.MimeType ?? "application/octet-stream", Blob = encoded };
+    }
 
     return ValueTask.FromResult(new ReadResourceResult
     {
