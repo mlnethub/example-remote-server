@@ -231,11 +231,29 @@ static bool TryAuthenticate(HttpContext context, InMemoryAuthStore store, out Ac
     return true;
 }
 
+static (List<T> Page, string? NextCursor) Paginate<T>(IReadOnlyList<T> items, string? cursor)
+{
+    var start = int.TryParse(cursor, out var parsed) ? parsed : 0;
+    start = Math.Clamp(start, 0, items.Count);
+    var take = Math.Min(ResourceStore.PageSize, Math.Max(0, items.Count - start));
+
+    List<T> page;
+    if (items is List<T> list)
+    {
+        page = list.GetRange(start, take);
+    }
+    else
+    {
+        page = items.Skip(start).Take(take).ToList();
+    }
+
+    var nextCursor = start + take < items.Count ? (start + take).ToString() : null;
+    return (page, nextCursor);
+}
+
 static ValueTask<ListResourcesResult> ListResourcesAsync(RequestContext<ListResourcesRequestParams> context, CancellationToken cancellationToken)
 {
-    var start = int.TryParse(context.Params?.Cursor, out var cursor) ? cursor : 0;
-    var page = ResourceStore.Resources.Skip(start).Take(ResourceStore.PageSize).ToList();
-    var nextCursor = start + page.Count < ResourceStore.Resources.Count ? (start + page.Count).ToString() : null;
+    var (page, nextCursor) = Paginate(ResourceStore.Resources, context.Params?.Cursor);
 
     return ValueTask.FromResult(new ListResourcesResult
     {
@@ -246,9 +264,7 @@ static ValueTask<ListResourcesResult> ListResourcesAsync(RequestContext<ListReso
 
 static ValueTask<ListResourceTemplatesResult> ListResourceTemplatesAsync(RequestContext<ListResourceTemplatesRequestParams> context, CancellationToken cancellationToken)
 {
-    var start = int.TryParse(context.Params?.Cursor, out var cursor) ? cursor : 0;
-    var page = ResourceStore.Templates.Skip(start).Take(ResourceStore.PageSize).ToList();
-    var nextCursor = start + page.Count < ResourceStore.Templates.Count ? (start + page.Count).ToString() : null;
+    var (page, nextCursor) = Paginate(ResourceStore.Templates, context.Params?.Cursor);
 
     return ValueTask.FromResult(new ListResourceTemplatesResult
     {
@@ -260,7 +276,7 @@ static ValueTask<ListResourceTemplatesResult> ListResourceTemplatesAsync(Request
 static ValueTask<ReadResourceResult> ReadResourceAsync(RequestContext<ReadResourceRequestParams> context, CancellationToken cancellationToken)
 {
     var uri = context.Params?.Uri ?? string.Empty;
-    var resource = ResourceStore.Resources.FirstOrDefault(r => string.Equals(r.Uri, uri, StringComparison.OrdinalIgnoreCase));
+    ResourceStore.ResourcesByUri.TryGetValue(uri, out var resource);
 
     if (resource == null && uri.StartsWith("test://static/resource/", StringComparison.OrdinalIgnoreCase))
     {
@@ -357,8 +373,9 @@ static string SplashPage(ServerOptions options)
 static class ResourceStore
 {
     public const int PageSize = 5;
+    public const int InitialResourceCount = 10;
 
-    public static readonly List<Resource> Resources = Enumerable.Range(1, 10).Select(i => new Resource
+    public static readonly List<Resource> Resources = Enumerable.Range(1, InitialResourceCount).Select(i => new Resource
     {
         Name = $"resource-{i}",
         Title = $"Sample Resource {i}",
@@ -366,6 +383,7 @@ static class ResourceStore
         Description = "Example MCP resource served by ASP.NET Core",
         MimeType = i % 2 == 0 ? "text/plain" : "application/octet-stream"
     }).ToList();
+    public static readonly Dictionary<string, Resource> ResourcesByUri = Resources.ToDictionary(r => r.Uri, StringComparer.OrdinalIgnoreCase);
 
     public static readonly List<ResourceTemplate> Templates = new()
     {
