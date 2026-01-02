@@ -1,8 +1,23 @@
 using AspNetMcpServer;
 using Microsoft.AspNetCore.WebUtilities;
+using StackExchange.Redis;
 using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// 配置 Redis 连接字符串
+var redisConn = builder.Configuration.GetConnectionString("RedisConnection");
+var redisMultiplexer = ConnectionMultiplexer.Connect(redisConn);
+
+// 注册 Redis 多路复用器为单例
+builder.Services.AddSingleton<IConnectionMultiplexer>(redisMultiplexer);
+
+// 注册分布式缓存（用于简单的键值存储）
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = redisConn;
+    options.InstanceName = "MCP_Session_";
+});
 
 var serverOptions = ServerOptions.FromConfiguration(builder.Configuration);
 
