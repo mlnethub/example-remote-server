@@ -19,6 +19,8 @@ builder.Services.AddCors(options =>
         .AllowAnyMethod()
         .AllowAnyOrigin());
 });
+const int ResourcePageSize = 5;
+
 var resources = Enumerable.Range(1, 10).Select(i => new Resource
 {
     Name = $"resource-{i}",
@@ -48,7 +50,7 @@ var resourceTemplates = new List<ResourceTemplate>
     }
 };
 
-var resourceSubscriptions = new ConcurrentDictionary<string, byte>();
+var resourceSubscriptions = new ConcurrentDictionary<string, bool>();
 
 builder.Services.AddSingleton(serverOptions);
 builder.Services.AddSingleton<InMemoryAuthStore>();
@@ -262,9 +264,8 @@ static bool TryAuthenticate(HttpContext context, InMemoryAuthStore store, out Ac
 
 ValueTask<ListResourcesResult> ListResourcesAsync(RequestContext<ListResourcesRequestParams> context, CancellationToken cancellationToken)
 {
-    const int pageSize = 5;
     var start = int.TryParse(context.Params?.Cursor, out var cursor) ? cursor : 0;
-    var page = resources.Skip(start).Take(pageSize).ToList();
+    var page = resources.Skip(start).Take(ResourcePageSize).ToList();
     var nextCursor = start + page.Count < resources.Count ? (start + page.Count).ToString() : null;
 
     return ValueTask.FromResult(new ListResourcesResult
@@ -276,9 +277,8 @@ ValueTask<ListResourcesResult> ListResourcesAsync(RequestContext<ListResourcesRe
 
 ValueTask<ListResourceTemplatesResult> ListResourceTemplatesAsync(RequestContext<ListResourceTemplatesRequestParams> context, CancellationToken cancellationToken)
 {
-    const int pageSize = 5;
     var start = int.TryParse(context.Params?.Cursor, out var cursor) ? cursor : 0;
-    var page = resourceTemplates.Skip(start).Take(pageSize).ToList();
+    var page = resourceTemplates.Skip(start).Take(ResourcePageSize).ToList();
     var nextCursor = start + page.Count < resourceTemplates.Count ? (start + page.Count).ToString() : null;
 
     return ValueTask.FromResult(new ListResourceTemplatesResult
@@ -297,7 +297,7 @@ ValueTask<ReadResourceResult> ReadResourceAsync(RequestContext<ReadResourceReque
     {
         resource = new Resource
         {
-            Name = uri.Split('/').Last(),
+            Name = uri[(uri.LastIndexOf('/') + 1)..],
             Title = $"Generated {uri}",
             Uri = uri,
             Description = "Templated resource generated on demand",
@@ -325,7 +325,7 @@ ValueTask<EmptyResult> SubscribeResourceAsync(RequestContext<SubscribeRequestPar
     var uri = context.Params?.Uri;
     if (!string.IsNullOrWhiteSpace(uri))
     {
-        resourceSubscriptions[uri] = 1;
+        resourceSubscriptions[uri] = true;
     }
 
     return ValueTask.FromResult(new EmptyResult());
