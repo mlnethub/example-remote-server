@@ -5,6 +5,7 @@ using ModelContextProtocol.Server;
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -19,38 +20,6 @@ builder.Services.AddCors(options =>
         .AllowAnyMethod()
         .AllowAnyOrigin());
 });
-const int ResourcePageSize = 5;
-
-var resources = Enumerable.Range(1, 10).Select(i => new Resource
-{
-    Name = $"resource-{i}",
-    Title = $"Sample Resource {i}",
-    Uri = $"test://static/resource/{i}",
-    Description = "Example MCP resource served by ASP.NET Core",
-    MimeType = i % 2 == 0 ? "text/plain" : "application/octet-stream"
-}).ToList();
-
-var resourceTemplates = new List<ResourceTemplate>
-{
-    new()
-    {
-        Name = "static-resource",
-        Title = "Static resource by id",
-        UriTemplate = "test://static/resource/{id}",
-        Description = "Templated static resource that can be read directly by id",
-        MimeType = "text/plain"
-    },
-    new()
-    {
-        Name = "log-stream",
-        Title = "Real-time log stream",
-        UriTemplate = "test://logs/{level}",
-        Description = "Subscribe to receive log messages for a level",
-        MimeType = "text/plain"
-    }
-};
-
-var resourceSubscriptions = new ConcurrentDictionary<string, bool>();
 
 builder.Services.AddSingleton(serverOptions);
 builder.Services.AddSingleton<InMemoryAuthStore>();
@@ -262,11 +231,11 @@ static bool TryAuthenticate(HttpContext context, InMemoryAuthStore store, out Ac
     return true;
 }
 
-ValueTask<ListResourcesResult> ListResourcesAsync(RequestContext<ListResourcesRequestParams> context, CancellationToken cancellationToken)
+static ValueTask<ListResourcesResult> ListResourcesAsync(RequestContext<ListResourcesRequestParams> context, CancellationToken cancellationToken)
 {
     var start = int.TryParse(context.Params?.Cursor, out var cursor) ? cursor : 0;
-    var page = resources.Skip(start).Take(ResourcePageSize).ToList();
-    var nextCursor = start + page.Count < resources.Count ? (start + page.Count).ToString() : null;
+    var page = ResourceStore.Resources.Skip(start).Take(ResourceStore.PageSize).ToList();
+    var nextCursor = start + page.Count < ResourceStore.Resources.Count ? (start + page.Count).ToString() : null;
 
     return ValueTask.FromResult(new ListResourcesResult
     {
@@ -275,11 +244,11 @@ ValueTask<ListResourcesResult> ListResourcesAsync(RequestContext<ListResourcesRe
     });
 }
 
-ValueTask<ListResourceTemplatesResult> ListResourceTemplatesAsync(RequestContext<ListResourceTemplatesRequestParams> context, CancellationToken cancellationToken)
+static ValueTask<ListResourceTemplatesResult> ListResourceTemplatesAsync(RequestContext<ListResourceTemplatesRequestParams> context, CancellationToken cancellationToken)
 {
     var start = int.TryParse(context.Params?.Cursor, out var cursor) ? cursor : 0;
-    var page = resourceTemplates.Skip(start).Take(ResourcePageSize).ToList();
-    var nextCursor = start + page.Count < resourceTemplates.Count ? (start + page.Count).ToString() : null;
+    var page = ResourceStore.Templates.Skip(start).Take(ResourceStore.PageSize).ToList();
+    var nextCursor = start + page.Count < ResourceStore.Templates.Count ? (start + page.Count).ToString() : null;
 
     return ValueTask.FromResult(new ListResourceTemplatesResult
     {
@@ -288,10 +257,10 @@ ValueTask<ListResourceTemplatesResult> ListResourceTemplatesAsync(RequestContext
     });
 }
 
-ValueTask<ReadResourceResult> ReadResourceAsync(RequestContext<ReadResourceRequestParams> context, CancellationToken cancellationToken)
+static ValueTask<ReadResourceResult> ReadResourceAsync(RequestContext<ReadResourceRequestParams> context, CancellationToken cancellationToken)
 {
     var uri = context.Params?.Uri ?? string.Empty;
-    var resource = resources.FirstOrDefault(r => string.Equals(r.Uri, uri, StringComparison.OrdinalIgnoreCase));
+    var resource = ResourceStore.Resources.FirstOrDefault(r => string.Equals(r.Uri, uri, StringComparison.OrdinalIgnoreCase));
 
     if (resource == null && uri.StartsWith("test://static/resource/", StringComparison.OrdinalIgnoreCase))
     {
@@ -310,7 +279,11 @@ ValueTask<ReadResourceResult> ReadResourceAsync(RequestContext<ReadResourceReque
 
     if (resource == null)
     {
-        return ValueTask.FromResult(new ReadResourceResult { Contents = Array.Empty<ResourceContents>() });
+        return ValueTask.FromResult(new ReadResourceResult
+        {
+            Contents = Array.Empty<ResourceContents>(),
+            Meta = new JsonObject { ["status"] = "not_found" }
+        });
     }
 
     ResourceContents content;
@@ -331,23 +304,23 @@ ValueTask<ReadResourceResult> ReadResourceAsync(RequestContext<ReadResourceReque
     });
 }
 
-ValueTask<EmptyResult> SubscribeResourceAsync(RequestContext<SubscribeRequestParams> context, CancellationToken cancellationToken)
+static ValueTask<EmptyResult> SubscribeResourceAsync(RequestContext<SubscribeRequestParams> context, CancellationToken cancellationToken)
 {
     var uri = context.Params?.Uri;
     if (!string.IsNullOrWhiteSpace(uri))
     {
-        resourceSubscriptions[uri] = true;
+        ResourceStore.Subscriptions[uri] = DateTime.UtcNow;
     }
 
     return ValueTask.FromResult(new EmptyResult());
 }
 
-ValueTask<EmptyResult> UnsubscribeResourceAsync(RequestContext<UnsubscribeRequestParams> context, CancellationToken cancellationToken)
+static ValueTask<EmptyResult> UnsubscribeResourceAsync(RequestContext<UnsubscribeRequestParams> context, CancellationToken cancellationToken)
 {
     var uri = context.Params?.Uri;
     if (!string.IsNullOrWhiteSpace(uri))
     {
-        resourceSubscriptions.TryRemove(uri, out _);
+        ResourceStore.Subscriptions.TryRemove(uri, out _);
     }
 
     return ValueTask.FromResult(new EmptyResult());
@@ -379,4 +352,40 @@ static string SplashPage(ServerOptions options)
     <div class=""endpoint"">GET/POST/DELETE {options.BaseUri}/mcp</div>
   </body>
 </html>";
+}
+
+static class ResourceStore
+{
+    public const int PageSize = 5;
+
+    public static readonly List<Resource> Resources = Enumerable.Range(1, 10).Select(i => new Resource
+    {
+        Name = $"resource-{i}",
+        Title = $"Sample Resource {i}",
+        Uri = $"test://static/resource/{i}",
+        Description = "Example MCP resource served by ASP.NET Core",
+        MimeType = i % 2 == 0 ? "text/plain" : "application/octet-stream"
+    }).ToList();
+
+    public static readonly List<ResourceTemplate> Templates = new()
+    {
+        new()
+        {
+            Name = "static-resource",
+            Title = "Static resource by id",
+            UriTemplate = "test://static/resource/{id}",
+            Description = "Templated static resource that can be read directly by id",
+            MimeType = "text/plain"
+        },
+        new()
+        {
+            Name = "log-stream",
+            Title = "Real-time log stream",
+            UriTemplate = "test://logs/{level}",
+            Description = "Subscribe to receive log messages for a level",
+            MimeType = "text/plain"
+        }
+    };
+
+    public static readonly ConcurrentDictionary<string, DateTime> Subscriptions = new();
 }
