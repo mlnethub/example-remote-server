@@ -1,11 +1,6 @@
 using AspNetMcpServer;
 using Microsoft.AspNetCore.WebUtilities;
-using ModelContextProtocol.Protocol;
-using ModelContextProtocol.Server;
-using System.Collections.Concurrent;
-using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -24,15 +19,11 @@ builder.Services.AddCors(options =>
 builder.Services.AddSingleton(serverOptions);
 builder.Services.AddSingleton<InMemoryAuthStore>();
 
-// Register MCP server with HTTP transport and attribute-discovered tools
+// Register MCP server with HTTP transport, tools, and resources discovered via attributes
 builder.Services.AddMcpServer()
     .WithHttpTransport()
     .WithToolsFromAssembly()
-    .WithListResourcesHandler(ListResourcesAsync)
-    .WithListResourceTemplatesHandler(ListResourceTemplatesAsync)
-    .WithReadResourceHandler(ReadResourceAsync)
-    .WithSubscribeToResourcesHandler(SubscribeResourceAsync)
-    .WithUnsubscribeFromResourcesHandler(UnsubscribeResourceAsync);
+    .WithResourcesFromAssembly();
 
 var app = builder.Build();
 app.UseCors();
@@ -231,128 +222,17 @@ static bool TryAuthenticate(HttpContext context, InMemoryAuthStore store, out Ac
     return true;
 }
 
-static (List<T> Page, string? NextCursor) Paginate<T>(IReadOnlyList<T> items, string? cursor)
-{
-    var start = int.TryParse(cursor, out var parsed) ? parsed : 0;
-    start = Math.Clamp(start, 0, items.Count);
-    var take = Math.Min(ResourceStore.PageSize, Math.Max(0, items.Count - start));
-
-    List<T> page;
-    if (items is List<T> list)
-    {
-        page = list.GetRange(start, take);
-    }
-    else
-    {
-        page = items.Skip(start).Take(take).ToList();
-    }
-
-    var nextCursor = start + take < items.Count ? (start + take).ToString() : null;
-    return (page, nextCursor);
-}
-
-static ValueTask<ListResourcesResult> ListResourcesAsync(RequestContext<ListResourcesRequestParams> context, CancellationToken cancellationToken)
-{
-    var (page, nextCursor) = Paginate(ResourceStore.Resources, context.Params?.Cursor);
-
-    return ValueTask.FromResult(new ListResourcesResult
-    {
-        Resources = page,
-        NextCursor = nextCursor
-    });
-}
-
-static ValueTask<ListResourceTemplatesResult> ListResourceTemplatesAsync(RequestContext<ListResourceTemplatesRequestParams> context, CancellationToken cancellationToken)
-{
-    var (page, nextCursor) = Paginate(ResourceStore.Templates, context.Params?.Cursor);
-
-    return ValueTask.FromResult(new ListResourceTemplatesResult
-    {
-        ResourceTemplates = page,
-        NextCursor = nextCursor
-    });
-}
-
-static ValueTask<ReadResourceResult> ReadResourceAsync(RequestContext<ReadResourceRequestParams> context, CancellationToken cancellationToken)
-{
-    var uri = context.Params?.Uri ?? string.Empty;
-    ResourceStore.ResourcesByUri.TryGetValue(uri, out var resource);
-
-    if (resource == null && uri.StartsWith("test://static/resource/", StringComparison.OrdinalIgnoreCase))
-    {
-        var lastSlash = uri.LastIndexOf('/');
-        var name = lastSlash >= 0 && lastSlash < uri.Length - 1 ? uri[(lastSlash + 1)..] : uri;
-
-        resource = new Resource
-        {
-            Name = name,
-            Title = $"Generated {uri}",
-            Uri = uri,
-            Description = "Templated resource generated on demand",
-            MimeType = "text/plain"
-        };
-    }
-
-    if (resource == null)
-    {
-        return ValueTask.FromResult(new ReadResourceResult
-        {
-            Contents = Array.Empty<ResourceContents>(),
-            Meta = new JsonObject { ["status"] = "not_found" }
-        });
-    }
-
-    ResourceContents content;
-    if (resource.MimeType?.StartsWith("text/", StringComparison.OrdinalIgnoreCase) == true)
-    {
-        content = new TextResourceContents { Uri = resource.Uri, MimeType = resource.MimeType, Text = $"Content for {resource.Title}" };
-    }
-    else
-    {
-        var payload = $"Binary payload for {resource.Title}";
-        var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(payload));
-        content = new BlobResourceContents { Uri = resource.Uri, MimeType = resource.MimeType ?? "application/octet-stream", Blob = encoded };
-    }
-
-    return ValueTask.FromResult(new ReadResourceResult
-    {
-        Contents = new List<ResourceContents> { content }
-    });
-}
-
-static ValueTask<EmptyResult> SubscribeResourceAsync(RequestContext<SubscribeRequestParams> context, CancellationToken cancellationToken)
-{
-    var uri = context.Params?.Uri;
-    if (!string.IsNullOrWhiteSpace(uri))
-    {
-        ResourceStore.Subscriptions[uri] = DateTime.UtcNow;
-    }
-
-    return ValueTask.FromResult(new EmptyResult());
-}
-
-static ValueTask<EmptyResult> UnsubscribeResourceAsync(RequestContext<UnsubscribeRequestParams> context, CancellationToken cancellationToken)
-{
-    var uri = context.Params?.Uri;
-    if (!string.IsNullOrWhiteSpace(uri))
-    {
-        ResourceStore.Subscriptions.TryRemove(uri, out _);
-    }
-
-    return ValueTask.FromResult(new EmptyResult());
-}
-
 static string SplashPage(ServerOptions options)
 {
-    return $@"<!DOCTYPE html>
+    return @"<!DOCTYPE html>
 <html>
   <head>
     <meta charset=""UTF-8"" />
     <title>MCP ASP.NET Core Server</title>
     <style>
-      body {{ font-family: system-ui, sans-serif; max-width: 900px; margin: 40px auto; padding: 16px; }}
-      code {{ background: #f6f8fa; padding: 2px 4px; border-radius: 4px; }}
-      .endpoint {{ background: #f6f8fa; padding: 8px; margin: 6px 0; border-radius: 6px; font-family: monospace; }}
+      body { font-family: system-ui, sans-serif; max-width: 900px; margin: 40px auto; padding: 16px; }
+      code { background: #f6f8fa; padding: 2px 4px; border-radius: 4px; }
+      .endpoint { background: #f6f8fa; padding: 8px; margin: 6px 0; border-radius: 6px; font-family: monospace; }
     </style>
   </head>
   <body>
@@ -368,42 +248,4 @@ static string SplashPage(ServerOptions options)
     <div class=""endpoint"">GET/POST/DELETE {options.BaseUri}/mcp</div>
   </body>
 </html>";
-}
-
-static class ResourceStore
-{
-    public const int PageSize = 5;
-    public const int InitialResourceCount = 10;
-
-    public static readonly List<Resource> Resources = Enumerable.Range(1, InitialResourceCount).Select(i => new Resource
-    {
-        Name = $"resource-{i}",
-        Title = $"Sample Resource {i}",
-        Uri = $"test://static/resource/{i}",
-        Description = "Example MCP resource served by ASP.NET Core",
-        MimeType = i % 2 == 0 ? "text/plain" : "application/octet-stream"
-    }).ToList();
-    public static readonly Dictionary<string, Resource> ResourcesByUri = Resources.ToDictionary(r => r.Uri, StringComparer.OrdinalIgnoreCase);
-
-    public static readonly List<ResourceTemplate> Templates = new()
-    {
-        new()
-        {
-            Name = "static-resource",
-            Title = "Static resource by id",
-            UriTemplate = "test://static/resource/{id}",
-            Description = "Templated static resource that can be read directly by id",
-            MimeType = "text/plain"
-        },
-        new()
-        {
-            Name = "log-stream",
-            Title = "Real-time log stream",
-            UriTemplate = "test://logs/{level}",
-            Description = "Subscribe to receive log messages for a level",
-            MimeType = "text/plain"
-        }
-    };
-
-    public static readonly ConcurrentDictionary<string, DateTime> Subscriptions = new();
 }
